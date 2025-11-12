@@ -1,9 +1,11 @@
 import requests
+from bs4 import BeautifulSoup
 import sqlite3
 import time
 import logging
 import json
 from datetime import datetime
+import os
 import threading
 import re
 import asyncio
@@ -54,18 +56,25 @@ class SheinStockMonitor:
     
     def get_shein_stock_count(self):
         """
-        Get stock count for both Women and Men from Shein API with basic headers
+        Get stock count for both Women and Men from Shein API using the working method
         Returns: tuple (women_stock, men_stock, total_stock)
         """
         try:
-            # Basic headers to mimic a normal browser request
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
+                'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'accept-language': 'en-US,en;q=0.9',
+                'cache-control': 'no-cache',
+                'pragma': 'no-cache',
+                'priority': 'u=0, i',
+                'sec-ch-ua': '"Google Chrome";v="141", "Not?A_Brand";v="8", "Chromium";v="141"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'sec-fetch-dest': 'document',
+                'sec-fetch-mode': 'navigate',
+                'sec-fetch-site': 'same-origin',
+                'sec-fetch-user': '?1',
+                'upgrade-insecure-requests': '1',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36'
             }
             
             response = requests.get(
@@ -75,10 +84,31 @@ class SheinStockMonitor:
             )
             response.raise_for_status()
             
-            print(f"✅ Response status: {response.status_code}")
+            # Parse the HTML response to find the JSON data - USING WORKING METHOD
+            soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Extract stock from response text using regex
-            return self.extract_stock_from_response_text(response.text)
+            # Look for script tags containing product data
+            scripts = soup.find_all('script')
+            for script in scripts:
+                script_content = script.string
+                if script_content and 'facets' in script_content and 'genderfilter' in script_content:
+                    try:
+                        # Extract JSON data from script tag - WORKING METHOD
+                        if 'window.goodsDetailData' in script_content:
+                            json_str = script_content.split('window.goodsDetailData = ')[1].split(';')[0]
+                            data = json.loads(json_str)
+                            return self.extract_gender_stock_from_data(data)
+                        elif 'window.goodsListV2' in script_content:
+                            json_str = script_content.split('window.goodsListV2 = ')[1].split(';')[0]
+                            data = json.loads(json_str)
+                            return self.extract_gender_stock_from_data(data)
+                    except (json.JSONDecodeError, IndexError, KeyError) as e:
+                        print(f"⚠️ Error parsing script data: {e}")
+                        continue
+            
+            # Alternative: Search for gender patterns in the entire response
+            response_text = response.text
+            return self.extract_gender_stock_from_response(response_text)
             
         except requests.RequestException as e:
             print(f"❌ Error making API request: {e}")
@@ -87,59 +117,68 @@ class SheinStockMonitor:
             print(f"❌ Unexpected error during API call: {e}")
             return 0, 0, 0
     
-    def extract_stock_from_response_text(self, response_text):
-        """Extract stock counts from response text using regex patterns"""
+    def extract_gender_stock_from_data(self, data):
+        """Extract women and men stock counts from JSON data"""
         women_stock = 0
         men_stock = 0
         
         try:
-            # Debug: Check if we have the expected content
-            if 'genderfilter-Women' not in response_text:
-                print("⚠️ genderfilter-Women not found in response")
-                # Save response for debugging
-                with open('/tmp/debug_response.html', 'w', encoding='utf-8') as f:
-                    f.write(response_text)
-                print("📁 Saved response to /tmp/debug_response.html for inspection")
+            # Navigate through the JSON structure to find gender filters
+            facets = data.get('facets', {})
+            if not facets:
+                # Try alternative location
+                facets = data.get('result', {}).get('facets', {})
             
-            # Pattern for women stock - more flexible pattern
-            women_patterns = [
-                r'"genderfilter-Women":\s*\{[^}]*"count":\s*(\d+)',
-                r'genderfilter-Women[^}]*count[^}]*?(\d+)',
-                r'Women[^}]*count[^}]*?(\d+)'
-            ]
+            gender_filter = facets.get('genderfilter', {})
             
-            for pattern in women_patterns:
-                women_match = re.search(pattern, response_text)
-                if women_match:
-                    women_stock = int(women_match.group(1))
-                    print(f"✅ Found women stock: {women_stock} with pattern: {pattern}")
-                    break
+            # Extract women stock
+            women_data = gender_filter.get('genderfilter-Women', {})
+            if women_data and 'count' in women_data:
+                women_stock = women_data['count']
             
-            # Pattern for men stock - more flexible pattern
-            men_patterns = [
-                r'"genderfilter-Men":\s*\{[^}]*"count":\s*(\d+)',
-                r'genderfilter-Men[^}]*count[^}]*?(\d+)',
-                r'Men[^}]*count[^}]*?(\d+)'
-            ]
-            
-            for pattern in men_patterns:
-                men_match = re.search(pattern, response_text)
-                if men_match:
-                    men_stock = int(men_match.group(1))
-                    print(f"✅ Found men stock: {men_stock} with pattern: {pattern}")
-                    break
+            # Extract men stock
+            men_data = gender_filter.get('genderfilter-Men', {})
+            if men_data and 'count' in men_data:
+                men_stock = men_data['count']
             else:
-                # If no men stock found, set to 0
                 men_stock = 0
-                print("ℹ️ No men stock found, setting to 0")
                 
             total_stock = women_stock + men_stock
             
-            print(f"📊 Final stock - Women: {women_stock}, Men: {men_stock}, Total: {total_stock}")
+            print(f"✅ Found stock - Women: {women_stock}, Men: {men_stock}, Total: {total_stock}")
             return women_stock, men_stock, total_stock
             
         except Exception as e:
-            print(f"❌ Error extracting stock via regex: {e}")
+            print(f"❌ Error extracting gender stock from data: {e}")
+            return 0, 0, 0
+    
+    def extract_gender_stock_from_response(self, response_text):
+        """Extract gender stock counts from response text using regex patterns"""
+        women_stock = 0
+        men_stock = 0
+        
+        try:
+            # Pattern for women stock
+            women_pattern = r'"genderfilter-Women":\s*\{[^}]*"count":\s*(\d+)'
+            women_match = re.search(women_pattern, response_text)
+            if women_match:
+                women_stock = int(women_match.group(1))
+            
+            # Pattern for men stock
+            men_pattern = r'"genderfilter-Men":\s*\{[^}]*"count":\s*(\d+)'
+            men_match = re.search(men_pattern, response_text)
+            if men_match:
+                men_stock = int(men_match.group(1))
+            else:
+                men_stock = 0
+                
+            total_stock = women_stock + men_stock
+            
+            print(f"✅ Found stock via regex - Women: {women_stock}, Men: {men_stock}, Total: {total_stock}")
+            return women_stock, men_stock, total_stock
+            
+        except Exception as e:
+            print(f"❌ Error extracting gender stock via regex: {e}")
             return 0, 0, 0
     
     def get_previous_stock(self):

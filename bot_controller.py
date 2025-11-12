@@ -54,32 +54,92 @@ class SheinStockMonitor:
     
     def get_shein_stock_count(self):
         """
-        Simple curl-like request to get women and men stock counts
+        Get stock count for both Women and Men from Shein API with basic headers
         Returns: tuple (women_stock, men_stock, total_stock)
         """
         try:
-            # Simple request without any headers - just like curl
-            response = requests.get(self.config['api_url'], timeout=15)
+            # Basic headers to mimic a normal browser request
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+            }
+            
+            response = requests.get(
+                self.config['api_url'],
+                headers=headers,
+                timeout=15
+            )
             response.raise_for_status()
             
-            response_text = response.text
-            print("✅ Got response from Shein")
+            print(f"✅ Response status: {response.status_code}")
             
-            # Extract women stock
-            women_match = re.search(r'"genderfilter-Women":\{[^}]*"count":\s*(\d+)', response_text)
-            women_stock = int(women_match.group(1)) if women_match else 0
+            # Extract stock from response text using regex
+            return self.extract_stock_from_response_text(response.text)
             
-            # Extract men stock
-            men_match = re.search(r'"genderfilter-Men":\{[^}]*"count":\s*(\d+)', response_text)
-            men_stock = int(men_match.group(1)) if men_match else 0
+        except requests.RequestException as e:
+            print(f"❌ Error making API request: {e}")
+            return 0, 0, 0
+        except Exception as e:
+            print(f"❌ Unexpected error during API call: {e}")
+            return 0, 0, 0
+    
+    def extract_stock_from_response_text(self, response_text):
+        """Extract stock counts from response text using regex patterns"""
+        women_stock = 0
+        men_stock = 0
+        
+        try:
+            # Debug: Check if we have the expected content
+            if 'genderfilter-Women' not in response_text:
+                print("⚠️ genderfilter-Women not found in response")
+                # Save response for debugging
+                with open('/tmp/debug_response.html', 'w', encoding='utf-8') as f:
+                    f.write(response_text)
+                print("📁 Saved response to /tmp/debug_response.html for inspection")
             
+            # Pattern for women stock - more flexible pattern
+            women_patterns = [
+                r'"genderfilter-Women":\s*\{[^}]*"count":\s*(\d+)',
+                r'genderfilter-Women[^}]*count[^}]*?(\d+)',
+                r'Women[^}]*count[^}]*?(\d+)'
+            ]
+            
+            for pattern in women_patterns:
+                women_match = re.search(pattern, response_text)
+                if women_match:
+                    women_stock = int(women_match.group(1))
+                    print(f"✅ Found women stock: {women_stock} with pattern: {pattern}")
+                    break
+            
+            # Pattern for men stock - more flexible pattern
+            men_patterns = [
+                r'"genderfilter-Men":\s*\{[^}]*"count":\s*(\d+)',
+                r'genderfilter-Men[^}]*count[^}]*?(\d+)',
+                r'Men[^}]*count[^}]*?(\d+)'
+            ]
+            
+            for pattern in men_patterns:
+                men_match = re.search(pattern, response_text)
+                if men_match:
+                    men_stock = int(men_match.group(1))
+                    print(f"✅ Found men stock: {men_stock} with pattern: {pattern}")
+                    break
+            else:
+                # If no men stock found, set to 0
+                men_stock = 0
+                print("ℹ️ No men stock found, setting to 0")
+                
             total_stock = women_stock + men_stock
             
-            print(f"📊 Women: {women_stock}, Men: {men_stock}, Total: {total_stock}")
+            print(f"📊 Final stock - Women: {women_stock}, Men: {men_stock}, Total: {total_stock}")
             return women_stock, men_stock, total_stock
             
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"❌ Error extracting stock via regex: {e}")
             return 0, 0, 0
     
     def get_previous_stock(self):
@@ -118,7 +178,7 @@ class SheinStockMonitor:
     
     def check_stock(self):
         """Check if stock has significantly increased"""
-        print("🔍 Checking stock...")
+        print("🔍 Checking Shein for stock updates...")
         
         # Get current stock counts
         women_stock, men_stock, current_total = self.get_shein_stock_count()
@@ -133,73 +193,78 @@ class SheinStockMonitor:
         # Calculate change
         stock_change = current_total - previous_total
         
-        print(f"📈 Change: {stock_change} (Previous: {previous_total})")
+        print(f"📊 Stock - Women: {women_stock}, Men: {men_stock}, Total: {current_total}")
+        print(f"📈 Change: {stock_change} (Previous Total: {previous_total})")
         
         # Check if significant increase
-        if stock_change >= self.config['min_increase_threshold']:
+        if (stock_change >= self.config['min_increase_threshold'] and 
+            current_total >= self.config['min_stock_threshold']):
             
-            # Save with notification
+            # Save with notification flag
             self.save_current_stock(women_stock, men_stock, current_total, stock_change)
             
-            # Send alert
+            # Send notifications
             asyncio.run(self.send_stock_alert(women_stock, men_stock, current_total, previous_total, stock_change))
-            print(f"🚨 Sent alert for stock increase: +{stock_change}")
+            print(f"✅ Sent alert for stock increase: +{stock_change}")
         
         else:
             # Save without notification
             self.save_current_stock(women_stock, men_stock, current_total, stock_change)
-            print("✅ No significant change")
+            print("✅ No significant stock change detected")
     
     async def send_stock_alert(self, women_stock, men_stock, current_total, previous_total, increase):
         """Send notifications for significant stock increase"""
         message = f"""
 🚨 SVerse STOCK ALERT! 🚨
 
-📈 **Stock Increased!**
+📈 **Stock Increased Significantly!**
 
-👚 Women: {women_stock} items
-👔 Men: {men_stock} items
-📊 Total: {current_total} items
+👚 Women's Stock: {women_stock} items
+👔 Men's Stock: {men_stock} items
+📊 Total Stock: {current_total} items
 
 🔄 Change: +{increase} items
-📉 Previous: {previous_total} items
+📉 Previous Total: {previous_total} items
 
-🔗 Check: {self.config['api_url']}
+🔗 Check Now: {self.config['api_url']}
 
-⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+⏰ Alert Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-⚡ Quick! New items available!
+⚡ Quick! New SVerse items might be available!
         """.strip()
         
+        # Send Telegram notification
         await self.send_telegram_message(message)
     
     async def send_test_notification(self):
-        """Send a test notification"""
+        """Send a test notification to verify everything works"""
         test_message = f"""
-🧪 TEST - Shein Stock Monitor
+🧪 TEST NOTIFICATION - Shein Stock Monitor
 
-✅ Monitor is working!
-🤖 Bot is active
-📱 Alerts enabled
+✅ Your Shein stock monitor is working correctly!
+🤖 Bot is active and ready to send alerts
+📱 You will receive notifications when SVerse stock increases
 
-🔗 {self.config['api_url']}
-⏰ Check: {self.config['check_interval_seconds']}s
-📈 Alert: +{self.config['min_increase_threshold']} items
+🔗 Monitoring: {self.config['api_url']}
+⏰ Check Interval: {self.config['check_interval_seconds']} seconds
+📈 Alert Threshold: +{self.config['min_increase_threshold']} items
 
-⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+⏰ Test Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+🎉 Everything is set up properly!
         """.strip()
         
         await self.send_telegram_message(test_message)
-        print("✅ Test notification sent!")
+        print("✅ Test notification sent successfully!")
     
     def start_monitoring_loop(self):
         """Start monitoring in background thread"""
         def monitor():
-            print("🔄 Monitoring started!")
+            print("🔄 Monitoring loop started!")
             while self.monitoring:
                 self.check_stock()
                 time.sleep(self.config['check_interval_seconds'])
-            print("🛑 Monitoring stopped")
+            print("🛑 Monitoring loop stopped")
         
         self.monitor_thread = threading.Thread(target=monitor)
         self.monitor_thread.daemon = True
@@ -208,7 +273,7 @@ class SheinStockMonitor:
     def start_monitoring(self):
         """Start the monitoring"""
         if self.monitoring:
-            print("🔄 Already running!")
+            print("🔄 Monitoring is already running!")
             return
         
         self.monitoring = True
@@ -220,32 +285,40 @@ class SheinStockMonitor:
         # Initial check
         self.check_stock()
         
-        print(f"✅ Monitoring every {self.config['check_interval_seconds']} seconds")
+        print(f"✅ Monitor started successfully! Checking every {self.config['check_interval_seconds']} seconds...")
     
     def stop_monitoring(self):
         """Stop monitoring"""
         if not self.monitoring:
-            print("❌ Not running!")
+            print("❌ Monitoring is not running!")
             return
         
         self.monitoring = False
-        print("🛑 Stopped!")
+        print("🛑 Monitoring stopped!")
 
 def main():
     """Main function"""
-    print("🚀 Starting Shein Stock Monitor...")
-    print("📱 Telegram alerts enabled")
-    print(f"⏰ Check every: {CONFIG['check_interval_seconds']} seconds")
+    print("🚀 Starting Shein Stock Monitor Cloud Bot...")
+    print("💡 This bot runs 24/7 in the cloud!")
+    print("📱 Sends Telegram alerts when stock increases")
+    print(f"⏰ Check interval: {CONFIG['check_interval_seconds']} seconds")
     print(f"📈 Alert threshold: +{CONFIG['min_increase_threshold']} items")
     
     monitor = SheinStockMonitor(CONFIG)
+    
+    # Start monitoring immediately
     monitor.start_monitoring()
     
+    print("✅ Monitor is running! It will continue automatically.")
+    print("💡 The bot will check stock every 10 seconds and send alerts for significant increases.")
+    
     try:
+        # Keep the main thread alive
         while True:
-            time.sleep(60)
+            time.sleep(60)  # Check every minute if still running
+            
     except KeyboardInterrupt:
-        print("\n🛑 Stopping...")
+        print("\n🛑 Stopping monitor...")
         monitor.stop_monitoring()
 
 if __name__ == "__main__":

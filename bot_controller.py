@@ -56,8 +56,8 @@ class SheinStockMonitor:
     
     def get_shein_stock_count(self):
         """
-        Get stock count for both Women and Men from Shein API using the working method
-        Returns: tuple (women_stock, men_stock, total_stock)
+        Get stock count from Shein API using the EXACT SAME METHOD as working PC version
+        But now extracting both Women and Men counts
         """
         try:
             headers = {
@@ -84,7 +84,7 @@ class SheinStockMonitor:
             )
             response.raise_for_status()
             
-            # Parse the HTML response to find the JSON data - USING WORKING METHOD
+            # Parse the HTML response to find the JSON data - EXACT SAME AS WORKING VERSION
             soup = BeautifulSoup(response.content, 'html.parser')
             
             # Look for script tags containing product data
@@ -93,22 +93,18 @@ class SheinStockMonitor:
                 script_content = script.string
                 if script_content and 'facets' in script_content and 'genderfilter' in script_content:
                     try:
-                        # Extract JSON data from script tag - WORKING METHOD
+                        # Extract JSON data from script tag - EXACT SAME METHOD
                         if 'window.goodsDetailData' in script_content:
                             json_str = script_content.split('window.goodsDetailData = ')[1].split(';')[0]
                             data = json.loads(json_str)
-                            return self.extract_gender_stock_from_data(data)
-                        elif 'window.goodsListV2' in script_content:
-                            json_str = script_content.split('window.goodsListV2 = ')[1].split(';')[0]
-                            data = json.loads(json_str)
-                            return self.extract_gender_stock_from_data(data)
+                            return self.extract_gender_counts(data)
                     except (json.JSONDecodeError, IndexError, KeyError) as e:
                         print(f"⚠️ Error parsing script data: {e}")
                         continue
             
-            # Alternative: Search for gender patterns in the entire response
+            # Alternative: Search for the pattern in the entire response - EXACT SAME REGEX
             response_text = response.text
-            return self.extract_gender_stock_from_response(response_text)
+            return self.extract_gender_counts_from_text(response_text)
             
         except requests.RequestException as e:
             print(f"❌ Error making API request: {e}")
@@ -117,18 +113,14 @@ class SheinStockMonitor:
             print(f"❌ Unexpected error during API call: {e}")
             return 0, 0, 0
     
-    def extract_gender_stock_from_data(self, data):
-        """Extract women and men stock counts from JSON data"""
+    def extract_gender_counts(self, data):
+        """Extract women and men counts from JSON data"""
         women_stock = 0
         men_stock = 0
         
         try:
             # Navigate through the JSON structure to find gender filters
             facets = data.get('facets', {})
-            if not facets:
-                # Try alternative location
-                facets = data.get('result', {}).get('facets', {})
-            
             gender_filter = facets.get('genderfilter', {})
             
             # Extract women stock
@@ -149,11 +141,11 @@ class SheinStockMonitor:
             return women_stock, men_stock, total_stock
             
         except Exception as e:
-            print(f"❌ Error extracting gender stock from data: {e}")
+            print(f"❌ Error extracting gender counts: {e}")
             return 0, 0, 0
     
-    def extract_gender_stock_from_response(self, response_text):
-        """Extract gender stock counts from response text using regex patterns"""
+    def extract_gender_counts_from_text(self, response_text):
+        """Extract gender counts from response text using regex"""
         women_stock = 0
         men_stock = 0
         
@@ -178,7 +170,7 @@ class SheinStockMonitor:
             return women_stock, men_stock, total_stock
             
         except Exception as e:
-            print(f"❌ Error extracting gender stock via regex: {e}")
+            print(f"❌ Error extracting gender counts via regex: {e}")
             return 0, 0, 0
     
     def get_previous_stock(self):

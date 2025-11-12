@@ -63,41 +63,65 @@ class SheinStockMonitor:
         women_count = 0
         
         try:
-            # Look for facets data that contains gender filters
-            facets = data.get('facets', {})
-            facet_items = facets.get('facetItems', [])
+            # Method 1: Look for genderfilter objects directly in the data
+            if 'genderfilter-Women' in data:
+                women_data = data.get('genderfilter-Women', {})
+                women_count = women_data.get('count', 0)
+                print(f"✅ Found women count in genderfilter-Women: {women_count}")
             
-            for item in facet_items:
-                if isinstance(item, dict):
-                    # Check for women count
-                    if (item.get('value') == ':relevance:genderfilter:Women' or 
-                        'Women' in item.get('name', '')):
-                        women_count = item.get('count', 0)
-                        print(f"✅ Found women count: {women_count}")
-                    
-                    # Check for men count
-                    elif (item.get('value') == ':relevance:genderfilter:Men' or 
-                          'Men' in item.get('name', '')):
-                        men_count = item.get('count', 0)
-                        print(f"✅ Found men count: {men_count}")
+            if 'genderfilter-Men' in data:
+                men_data = data.get('genderfilter-Men', {})
+                men_count = men_data.get('count', 0)
+                print(f"✅ Found men count in genderfilter-Men: {men_count}")
             
-            # Alternative: Search in the entire data structure
+            # Method 2: Search through all keys for genderfilter patterns
+            if men_count == 0 and women_count == 0:
+                for key, value in data.items():
+                    if isinstance(value, dict):
+                        # Check for women count
+                        if 'genderfilter-Women' in key or ('name' in value and value.get('name') == 'Women'):
+                            women_count = value.get('count', 0)
+                            if women_count > 0:
+                                print(f"✅ Found women count in {key}: {women_count}")
+                        
+                        # Check for men count
+                        if 'genderfilter-Men' in key or ('name' in value and value.get('name') == 'Men'):
+                            men_count = value.get('count', 0)
+                            if men_count > 0:
+                                print(f"✅ Found men count in {key}: {men_count}")
+            
+            # Method 3: Deep search in the entire data structure
             if men_count == 0 and women_count == 0:
                 data_str = json.dumps(data)
                 
-                # Look for women count using regex
-                women_pattern = r'"value":"[^"]*genderfilter[^"]*Women[^"]*"[^}]*"count":(\d+)'
+                # Look for women count using regex - specific pattern from the response
+                women_pattern = r'"genderfilter-Women":\s*\{[^}]*"count":\s*(\d+)'
                 women_match = re.search(women_pattern, data_str)
                 if women_match:
                     women_count = int(women_match.group(1))
                     print(f"✅ Found women count via regex: {women_count}")
                 
-                # Look for men count using regex
-                men_pattern = r'"value":"[^"]*genderfilter[^"]*Men[^"]*"[^}]*"count":(\d+)'
+                # Look for men count using regex - specific pattern from the response
+                men_pattern = r'"genderfilter-Men":\s*\{[^}]*"count":\s*(\d+)'
                 men_match = re.search(men_pattern, data_str)
                 if men_match:
                     men_count = int(men_match.group(1))
                     print(f"✅ Found men count via regex: {men_count}")
+                
+                # Alternative regex patterns
+                if women_count == 0:
+                    women_pattern2 = r'"name":"Women"[^}]*"count":\s*(\d+)'
+                    women_match2 = re.search(women_pattern2, data_str)
+                    if women_match2:
+                        women_count = int(women_match2.group(1))
+                        print(f"✅ Found women count via alternative regex: {women_count}")
+                
+                if men_count == 0:
+                    men_pattern2 = r'"name":"Men"[^}]*"count":\s*(\d+)'
+                    men_match2 = re.search(men_pattern2, data_str)
+                    if men_match2:
+                        men_count = int(men_match2.group(1))
+                        print(f"✅ Found men count via alternative regex: {men_count}")
             
         except Exception as e:
             print(f"⚠️ Error extracting gender counts: {e}")
@@ -161,12 +185,13 @@ class SheinStockMonitor:
             # Alternative: Search for the pattern in the entire response
             response_text = response.text
             if 'facets' in response_text and 'totalResults' in response_text:
+                # Extract total stock
                 pattern = r'"facets":\s*\{[^}]*"totalResults":\s*(\d+)'
                 match = re.search(pattern, response_text)
                 if match:
                     total_stock = int(match.group(1))
                     
-                    # Try to extract gender counts from response text
+                    # Extract gender counts from response text
                     men_count, women_count = self.extract_gender_counts_from_text(response_text)
                     
                     print(f"✅ Found total stock via regex: {total_stock}, Men: {men_count}, Women: {women_count}")
@@ -190,19 +215,33 @@ class SheinStockMonitor:
         women_count = 0
         
         try:
-            # Look for women count using regex
-            women_pattern = r'"value":"[^"]*genderfilter[^"]*Women[^"]*"[^}]*"count":(\d+)'
+            # Primary method: Look for the exact genderfilter objects
+            women_pattern = r'"genderfilter-Women":\s*\{[^}]*"count":\s*(\d+)'
             women_match = re.search(women_pattern, response_text)
             if women_match:
                 women_count = int(women_match.group(1))
                 print(f"✅ Found women count via text regex: {women_count}")
             
-            # Look for men count using regex
-            men_pattern = r'"value":"[^"]*genderfilter[^"]*Men[^"]*"[^}]*"count":(\d+)'
+            men_pattern = r'"genderfilter-Men":\s*\{[^}]*"count":\s*(\d+)'
             men_match = re.search(men_pattern, response_text)
             if men_match:
                 men_count = int(men_match.group(1))
                 print(f"✅ Found men count via text regex: {men_count}")
+            
+            # Secondary method: Look for name and count patterns
+            if women_count == 0:
+                women_pattern2 = r'"name":"Women"[^}]*"count":\s*(\d+)'
+                women_match2 = re.search(women_pattern2, response_text)
+                if women_match2:
+                    women_count = int(women_match2.group(1))
+                    print(f"✅ Found women count via alternative text regex: {women_count}")
+            
+            if men_count == 0:
+                men_pattern2 = r'"name":"Men"[^}]*"count":\s*(\d+)'
+                men_match2 = re.search(men_pattern2, response_text)
+                if men_match2:
+                    men_count = int(men_match2.group(1))
+                    print(f"✅ Found men count via alternative text regex: {men_count}")
                 
         except Exception as e:
             print(f"⚠️ Error extracting gender counts from text: {e}")

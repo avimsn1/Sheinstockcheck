@@ -531,32 +531,41 @@ Use the buttons below to control the monitor!
     
     def setup_telegram_commands(self):
         """Setup Telegram bot command handlers"""
-        self.telegram_app = Application.builder().token(self.config['telegram_bot_token']).build()
-        
-        # Add command handlers
-        self.telegram_app.add_handler(CommandHandler("start", self.start_command))
-        self.telegram_app.add_handler(CommandHandler("start_monitor", self.start_monitoring_command))
-        self.telegram_app.add_handler(CommandHandler("stop_monitor", self.stop_monitoring_command))
-        self.telegram_app.add_handler(CommandHandler("check_now", self.check_now_command))
-        self.telegram_app.add_handler(CommandHandler("status", self.status_command))
-        
-        print("✅ Telegram commands setup completed")
+        try:
+            # Create application instance
+            self.telegram_app = Application.builder().token(self.config['telegram_bot_token']).build()
+            
+            # Add command handlers
+            self.telegram_app.add_handler(CommandHandler("start", self.start_command))
+            self.telegram_app.add_handler(CommandHandler("start_monitor", self.start_monitoring_command))
+            self.telegram_app.add_handler(CommandHandler("stop_monitor", self.stop_monitoring_command))
+            self.telegram_app.add_handler(CommandHandler("check_now", self.check_now_command))
+            self.telegram_app.add_handler(CommandHandler("status", self.status_command))
+            
+            print("✅ Telegram commands setup completed")
+            return True
+        except Exception as e:
+            print(f"❌ Error setting up Telegram commands: {e}")
+            return False
     
-    async def start_telegram_polling(self):
-        """Start Telegram bot polling"""
-        if self.telegram_app:
-            print("🤖 Starting Telegram bot polling...")
-            await self.telegram_app.run_polling()
+    def start_telegram_polling(self):
+        """Start Telegram bot polling in a separate thread"""
+        try:
+            if self.telegram_app:
+                print("🤖 Starting Telegram bot polling...")
+                self.telegram_app.run_polling()
+        except Exception as e:
+            print(f"❌ Error in Telegram polling: {e}")
     
     def start_telegram_in_background(self):
         """Start Telegram bot in background thread"""
-        def run_bot():
-            asyncio.run(self.start_telegram_polling())
-        
-        bot_thread = threading.Thread(target=run_bot)
-        bot_thread.daemon = True
-        bot_thread.start()
-        print("✅ Telegram bot started in background")
+        if self.telegram_app:
+            bot_thread = threading.Thread(target=self.start_telegram_polling)
+            bot_thread.daemon = True
+            bot_thread.start()
+            print("✅ Telegram bot started in background")
+        else:
+            print("❌ Telegram app not initialized")
 
 def main():
     """Main function"""
@@ -567,26 +576,32 @@ def main():
     monitor = SheinStockMonitor(CONFIG)
     
     # Setup Telegram commands
-    monitor.setup_telegram_commands()
-    
-    # Start Telegram bot in background
-    monitor.start_telegram_in_background()
-    
-    # Start monitoring immediately (optional - you can remove this if you want only manual start)
-    # monitor.start_monitoring()
-    
-    print("✅ Monitor is running! It will continue automatically.")
-    print("💡 Use Telegram commands to control the monitor.")
-    print("🤖 Bot is listening for commands...")
-    
-    try:
-        # Keep the main thread alive
-        while True:
-            time.sleep(60)  # Check every minute if still running
-            
-    except KeyboardInterrupt:
-        print("\n🛑 Stopping monitor...")
-        monitor.stop_monitoring()
+    if monitor.setup_telegram_commands():
+        # Start Telegram bot in background
+        monitor.start_telegram_in_background()
+        
+        # Start monitoring immediately (you can remove this if you want only manual start)
+        print("🤖 Starting automatic monitoring...")
+        monitor.monitoring = True
+        monitor.start_monitoring_loop()
+        
+        print("✅ Monitor is running! It will continue automatically.")
+        print("💡 Use Telegram commands to control the monitor.")
+        print("🤖 Bot is listening for commands...")
+        
+        try:
+            # Keep the main thread alive
+            while True:
+                time.sleep(60)  # Check every minute if still running
+                
+        except KeyboardInterrupt:
+            print("\n🛑 Stopping monitor...")
+            monitor.monitoring = False
+    else:
+        print("❌ Failed to setup Telegram commands. Running in monitoring-only mode.")
+        
+        # Fallback: Start monitoring without Telegram commands
+        monitor.start_monitoring()
 
 if __name__ == "__main__":
     main()
